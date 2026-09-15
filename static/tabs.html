@@ -9,11 +9,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="shortcut icon" id="tab-favicon" href="favicon.png" />
   <title id="t">Home</title>
-  <link rel="stylesheet" href="/assets/css/global.css?v=6" />
-  <link rel="stylesheet" href="/assets/css/t.css?v=02" />
+  <link rel="stylesheet" href="/assets/css/global.css?v=7" />
+  <link rel="stylesheet" href="/assets/css/t.css?v=03" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script>
-    window.addEventListener("resize", navigator.keyboard.lock(["Escape"]));
+    if (navigator.keyboard?.lock) {
+      window.addEventListener("resize", () => navigator.keyboard.lock(["Escape"]));
+    }
   </script>
 </head>
 
