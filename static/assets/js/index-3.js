@@ -92,9 +92,9 @@ function blank(value) {
   processUrl(value);
 }
 
-dy = function(value) {
+function dy(value) {
   processUrl(value, `/a/q/${__uv$config.encodeUrl(value)}`);
-};
+}
 
 function isUrl(val = "") {
   if (/^http(s?):\/\//.test(val) || (val.includes(".") && val.substr(0, 1) !== " ")) {
