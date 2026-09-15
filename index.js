@@ -114,6 +114,14 @@ const transportStaticOptions = {
   },
 };
 
+// The iOS worker is served from /assets/, but must control /a/.
+// Explicitly allow that narrower proxy scope and prevent stale SW caching.
+app.use("/assets/sw.js", (_req, res, next) => {
+  res.setHeader("Service-Worker-Allowed", "/a/");
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
 app.use(express.static(path.join(__dirname, "static")));
 app.use("/ca", cors({ origin: true }));
 app.use("/bm", express.static(baremuxPath, transportStaticOptions));
