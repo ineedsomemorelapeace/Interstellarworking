@@ -1,7 +1,18 @@
 // index.js
 window.addEventListener("load", () => {
-  navigator.serviceWorker.register("../sw.js?v=2025-04-15", {
+  const isIOSWebKit =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  const serviceWorker = isIOSWebKit
+    ? "/assets/sw.js?v=2026-09-15-ios"
+    : "/sw.js?v=2025-04-15";
+
+  navigator.serviceWorker.register(serviceWorker, {
     scope: "/a/",
+    updateViaCache: "none",
+  }).catch(error => {
+    console.error("Service worker registration failed:", error);
   });
 });
 
@@ -81,9 +92,9 @@ function blank(value) {
   processUrl(value);
 }
 
-function dy(value) {
+dy = function(value) {
   processUrl(value, `/a/q/${__uv$config.encodeUrl(value)}`);
-}
+};
 
 function isUrl(val = "") {
   if (/^http(s?):\/\//.test(val) || (val.includes(".") && val.substr(0, 1) !== " ")) {
