@@ -1,19 +1,56 @@
 // tabs.js
-window.addEventListener("load", () => {
+window.addEventListener("load", async () => {
   const isIOSWebKit =
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-  const serviceWorker = isIOSWebKit
-    ? "/assets/sw.js?v=2026-09-15-ios"
-    : "/sw.js?v=2025-04-15";
+  if (isIOSWebKit && "serviceWorker" in navigator) {
+    try {
+      // Safari can restore an old service-worker registration from a previous
+      // visit. Remove old /a/ workers before installing the iPad-specific one.
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      const wanted = new URL("/assets/sw.js", location.origin).href;
+      let removedOldWorker = false;
 
-  navigator.serviceWorker.register(serviceWorker, {
-    scope: "/a/",
-    updateViaCache: "none",
-  }).catch(error => {
-    console.error("Service worker registration failed:", error);
-  });
+      for (const registration of registrations) {
+        const script = registration.active?.scriptURL || registration.waiting?.scriptURL || registration.installing?.scriptURL || "";
+        if (registration.scope.endsWith("/a/") && script && script !== wanted) {
+          await registration.unregister();
+          removedOldWorker = true;
+        }
+      }
+
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(key => caches.delete(key)));
+      }
+
+      const registration = await navigator.serviceWorker.register("/assets/sw.js?v=2026-09-15-ios-2", {
+        scope: "/a/",
+        updateViaCache: "none",
+      });
+
+      await registration.update();
+
+      // If Safari was still controlled by the old worker, one reload hands the
+      // page to the newly registered iOS worker. sessionStorage prevents loops.
+      const controllerScript = navigator.serviceWorker.controller?.scriptURL || "";
+      if (removedOldWorker && controllerScript && controllerScript !== wanted && !sessionStorage.getItem("ios-sw-reloaded")) {
+        sessionStorage.setItem("ios-sw-reloaded", "1");
+        location.reload();
+        return;
+      }
+      sessionStorage.removeItem("ios-sw-reloaded");
+    } catch (error) {
+      console.error("iOS service worker setup failed:", error);
+    }
+  } else if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js?v=2025-04-15", {
+      scope: "/a/",
+      updateViaCache: "none",
+    }).catch(error => console.error("Service worker registration failed:", error));
+  }
+
   const form = document.getElementById("fv");
   const input = document.getElementById("input");
   if (form && input) {
@@ -26,28 +63,19 @@ window.addEventListener("load", () => {
   }
 
   function useScramjetPxy() {
-    const p = localStorage.getItem("pchoice");
-    return p === "sj";
+    return localStorage.getItem("pchoice") === "sj";
   }
 
   async function getPxyUrl(url) {
     if (useScramjetPxy()) {
-      if (window.__isSjReady) {
-        await window.__isSjReady;
-      }
-      if (window.__isSj?.encodeUrl) {
-        return window.__isSj.encodeUrl(url);
-      }
+      if (window.__isSjReady) await window.__isSjReady;
+      if (window.__isSj?.encodeUrl) return window.__isSj.encodeUrl(url);
     }
-
     return `/a/${__uv$config.encodeUrl(url)}`;
   }
 
   function getPxyUrlSync(url) {
-    if (useScramjetPxy() && window.__isSj?.encodeUrl) {
-      return window.__isSj.encodeUrl(url);
-    }
-
+    if (useScramjetPxy() && window.__isSj?.encodeUrl) return window.__isSj.encodeUrl(url);
     return `/a/${__uv$config.encodeUrl(url)}`;
   }
 
@@ -56,41 +84,38 @@ window.addEventListener("load", () => {
     sessionStorage.setItem("GoUrl", pxyUrl);
     const iframeContainer = document.getElementById("frame-container");
     const activeIframe = Array.from(iframeContainer.querySelectorAll("iframe")).find(iframe => iframe.classList.contains("active"));
-    activeIframe.src = pxyUrl;
-    activeIframe.dataset.tabUrl = url;
+    if (activeIframe) {
+      activeIframe.src = pxyUrl;
+      activeIframe.dataset.tabUrl = url;
+    }
     input.value = url;
-    console.log(activeIframe.dataset.tabUrl);
+    Load();
   }
+
   function isUrl(val = "") {
-    if (/^http(s?):\/\//.test(val) || (val.includes(".") && val.substr(0, 1) !== " ")) {
-      return true;
-    }
-    return false;
+    return /^http(s?):\/\//.test(val) || (val.includes(".") && val.substr(0, 1) !== " ");
   }
+
   function prependHttps(url) {
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      return `https://${url}`;
-    }
-    return url;
+    return url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
   }
 
   window.__isGetPxyUrl = getPxyUrlSync;
 });
-document.addEventListener("DOMContentLoaded", event => {
+
+document.addEventListener("DOMContentLoaded", () => {
   const addTabButton = document.getElementById("add-tab");
   const tabList = document.getElementById("tab-list");
   const iframeContainer = document.getElementById("frame-container");
   let tabCounter = 1;
-  addTabButton.addEventListener("click", () => {
-    createNewTab();
-    Load();
-  });
+
+  addTabButton.addEventListener("click", () => { createNewTab(); Load(); });
+
   function createNewTab() {
     const newTab = document.createElement("li");
     const tabTitle = document.createElement("span");
     const newIframe = document.createElement("iframe");
     newIframe.sandbox = "allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-modals allow-orientation-lock allow-presentation allow-storage-access-by-user-activation";
-    // When Top Navigation is not allowed links with the "top" value will be entirely blocked, if we allow Top Navigation it will overwrite the tab, which is obviously not wanted.
     tabTitle.textContent = `New Tab ${tabCounter}`;
     tabTitle.className = "t";
     newTab.dataset.tabId = tabCounter;
@@ -100,344 +125,162 @@ document.addEventListener("DOMContentLoaded", event => {
     closeButton.classList.add("close-tab");
     closeButton.innerHTML = "&#10005;";
     closeButton.addEventListener("click", closeTab);
-    newTab.appendChild(tabTitle);
-    newTab.appendChild(closeButton);
+    newTab.append(tabTitle, closeButton);
     tabList.appendChild(newTab);
-    const allTabs = Array.from(tabList.querySelectorAll("li"));
-    for (const tab of allTabs) {
-      tab.classList.remove("active");
-    }
-    const allIframes = Array.from(iframeContainer.querySelectorAll("iframe"));
-    for (const iframe of allIframes) {
-      iframe.classList.remove("active");
-    }
+    tabList.querySelectorAll("li").forEach(tab => tab.classList.remove("active"));
+    iframeContainer.querySelectorAll("iframe").forEach(iframe => iframe.classList.remove("active"));
     newTab.classList.add("active");
     newIframe.dataset.tabId = tabCounter;
     newIframe.classList.add("active");
     newIframe.addEventListener("load", () => {
-      const title = newIframe.contentDocument.title;
-      if (title.length <= 1) {
-        tabTitle.textContent = "Tab";
-      } else {
-        tabTitle.textContent = title;
-      }
-      newIframe.contentWindow.open = url => {
-        const pxyUrl = window.__isGetPxyUrl
-          ? window.__isGetPxyUrl(url)
-          : `/a/${__uv$config.encodeUrl(url)}`;
-        sessionStorage.setItem("URL", pxyUrl);
-        createNewTab();
-        return null;
-      };
-      if (newIframe.contentDocument.documentElement.outerHTML.trim().length > 0) {
+      try {
+        const title = newIframe.contentDocument.title;
+        tabTitle.textContent = title.length <= 1 ? "Tab" : title;
+        newIframe.contentWindow.open = url => {
+          const pxyUrl = window.__isGetPxyUrl ? window.__isGetPxyUrl(url) : `/a/${__uv$config.encodeUrl(url)}`;
+          sessionStorage.setItem("URL", pxyUrl);
+          createNewTab();
+          return null;
+        };
         Load();
-      }
-      Load();
+      } catch {}
     });
-    const goUrl = sessionStorage.getItem("GoUrl");
-    const url = sessionStorage.getItem("URL");
 
     const resolveStoredUrl = value => {
-      if (!value) {
-        return null;
-      }
-
-      if (value.startsWith("/")) {
-        return window.location.origin + value;
-      }
-
-      return value;
+      if (!value) return null;
+      return value.startsWith("/") ? window.location.origin + value : value;
     };
-
-    if (tabCounter === 0 || tabCounter === 1) {
-      if (goUrl !== null) {
-        if (goUrl.includes("/e/")) {
-          newIframe.src = window.location.origin + goUrl;
-        } else {
-          newIframe.src = resolveStoredUrl(goUrl);
-        }
-      } else {
-        newIframe.src = "/";
-      }
-    } else if (tabCounter > 1) {
-      if (url !== null) {
-        newIframe.src = resolveStoredUrl(url);
-        sessionStorage.removeItem("URL");
-      } else if (goUrl !== null) {
-        if (goUrl.includes("/e/")) {
-          newIframe.src = window.location.origin + goUrl;
-        } else {
-          newIframe.src = resolveStoredUrl(goUrl);
-        }
-      } else {
-        newIframe.src = "/";
-      }
+    const goUrl = sessionStorage.getItem("GoUrl");
+    const url = sessionStorage.getItem("URL");
+    if (url && tabCounter > 1) {
+      newIframe.src = resolveStoredUrl(url);
+      sessionStorage.removeItem("URL");
+    } else if (goUrl) {
+      newIframe.src = resolveStoredUrl(goUrl);
+    } else {
+      newIframe.src = "/";
     }
-
     iframeContainer.appendChild(newIframe);
     tabCounter += 1;
   }
+
   function closeTab(event) {
     event.stopPropagation();
     const tabId = event.target.closest("li").dataset.tabId;
-    const tabToRemove = tabList.querySelector(`[data-tab-id='${tabId}']`);
-    const iframeToRemove = iframeContainer.querySelector(`[data-tab-id='${tabId}']`);
-    if (tabToRemove && iframeToRemove) {
-      tabToRemove.remove();
-      iframeToRemove.remove();
-      const remainingTabs = Array.from(tabList.querySelectorAll("li"));
-      if (remainingTabs.length === 0) {
-        tabCounter = 0;
-        document.getElementById("input").value = "";
-      } else {
-        const nextTabIndex = remainingTabs.findIndex(tab => tab.dataset.tabId !== tabId);
-        if (nextTabIndex > -1) {
-          const nextTabToActivate = remainingTabs[nextTabIndex];
-          const nextIframeToActivate = iframeContainer.querySelector(`[data-tab-id='${nextTabToActivate.dataset.tabId}']`);
-          for (const tab of remainingTabs) {
-            tab.classList.remove("active");
-          }
-          remainingTabs[nextTabIndex].classList.add("active");
-          const allIframes = Array.from(iframeContainer.querySelectorAll("iframe"));
-          for (const iframe of allIframes) {
-            iframe.classList.remove("active");
-          }
-          nextIframeToActivate.classList.add("active");
-        }
-      }
-    }
+    const tab = tabList.querySelector(`[data-tab-id='${tabId}']`);
+    const iframe = iframeContainer.querySelector(`[data-tab-id='${tabId}']`);
+    if (!tab || !iframe) return;
+    tab.remove(); iframe.remove();
+    const remaining = Array.from(tabList.querySelectorAll("li"));
+    if (!remaining.length) { tabCounter = 0; document.getElementById("input").value = ""; return; }
+    switchTab({ target: remaining[0] });
   }
+
   function switchTab(event) {
     const tabId = event.target.closest("li").dataset.tabId;
-    const allTabs = Array.from(tabList.querySelectorAll("li"));
-    for (const tab of allTabs) {
-      tab.classList.remove("active");
-    }
-    const allIframes = Array.from(iframeContainer.querySelectorAll("iframe"));
-    for (const iframe of allIframes) {
-      iframe.classList.remove("active");
-    }
-    const selectedTab = tabList.querySelector(`[data-tab-id='${tabId}']`);
-    if (selectedTab) {
-      selectedTab.classList.add("active");
-      Load();
-    } else {
-      console.log("No selected tab found with ID:", tabId);
-    }
-    const selectedIframe = iframeContainer.querySelector(`[data-tab-id='${tabId}']`);
-    if (selectedIframe) {
-      selectedIframe.classList.add("active");
-    } else {
-      console.log("No selected iframe found with ID:", tabId);
-    }
+    tabList.querySelectorAll("li").forEach(tab => tab.classList.remove("active"));
+    iframeContainer.querySelectorAll("iframe").forEach(iframe => iframe.classList.remove("active"));
+    tabList.querySelector(`[data-tab-id='${tabId}']`)?.classList.add("active");
+    iframeContainer.querySelector(`[data-tab-id='${tabId}']`)?.classList.add("active");
+    Load();
   }
+
   let dragTab = null;
-  tabList.addEventListener("dragstart", event => {
-    dragTab = event.target;
-  });
+  tabList.addEventListener("dragstart", event => { dragTab = event.target; });
   tabList.addEventListener("dragover", event => {
     event.preventDefault();
     const targetTab = event.target;
     if (targetTab.tagName === "LI" && targetTab !== dragTab) {
       const targetIndex = Array.from(tabList.children).indexOf(targetTab);
       const dragIndex = Array.from(tabList.children).indexOf(dragTab);
-      if (targetIndex < dragIndex) {
-        tabList.insertBefore(dragTab, targetTab);
-      } else {
-        tabList.insertBefore(dragTab, targetTab.nextSibling);
-      }
+      tabList.insertBefore(dragTab, targetIndex < dragIndex ? targetTab : targetTab.nextSibling);
     }
   });
-  tabList.addEventListener("dragend", () => {
-    dragTab = null;
-  });
+  tabList.addEventListener("dragend", () => { dragTab = null; });
   createNewTab();
 });
-// Reload
+
 function reload() {
   const activeIframe = document.querySelector("#frame-container iframe.active");
-  if (activeIframe) {
-    // biome-ignore lint: idk
-    activeIframe.src = activeIframe.src;
-    Load();
-  } else {
-    console.error("No active iframe found");
-  }
+  if (activeIframe) { activeIframe.src = activeIframe.src; Load(); }
 }
 
-// Popout
 function popout() {
   const activeIframe = document.querySelector("#frame-container iframe.active");
-  if (activeIframe) {
-    const newWindow = window.open("about:blank", "_blank");
-    if (newWindow) {
-      const name = localStorage.getItem("name") || "My Drive - Google Drive";
-      const icon = localStorage.getItem("icon") || "https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png";
-      newWindow.document.title = name;
-      const link = newWindow.document.createElement("link");
-      link.rel = "icon";
-      link.href = encodeURI(icon);
-      newWindow.document.head.appendChild(link);
-
-      const newIframe = newWindow.document.createElement("iframe");
-      const style = newIframe.style;
-      style.position = "fixed";
-      style.top = style.bottom = style.left = style.right = 0;
-      style.border = style.outline = "none";
-      style.width = style.height = "100%";
-
-      newIframe.src = activeIframe.src;
-
-      newWindow.document.body.appendChild(newIframe);
-    }
-  } else {
-    console.error("No active iframe found");
-  }
+  if (!activeIframe) return;
+  const newWindow = window.open("about:blank", "_blank");
+  if (!newWindow) return;
+  const name = localStorage.getItem("name") || "My Drive - Google Drive";
+  const icon = localStorage.getItem("icon") || "https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png";
+  newWindow.document.title = name;
+  const link = newWindow.document.createElement("link"); link.rel = "icon"; link.href = encodeURI(icon); newWindow.document.head.appendChild(link);
+  const newIframe = newWindow.document.createElement("iframe");
+  Object.assign(newIframe.style, {position:"fixed",top:"0",bottom:"0",left:"0",right:"0",border:"none",outline:"none",width:"100%",height:"100%"});
+  newIframe.src = activeIframe.src;
+  newWindow.document.body.appendChild(newIframe);
 }
 
 function eToggle() {
   const activeIframe = document.querySelector("#frame-container iframe.active");
-  if (!activeIframe) {
-    console.error("No active iframe found");
-    return;
-  }
+  if (!activeIframe?.contentWindow) return;
   const erudaWindow = activeIframe.contentWindow;
-  if (!erudaWindow) {
-    console.error("No content window found for the active iframe");
+  if (erudaWindow.eruda) {
+    if (erudaWindow.eruda._isInit) erudaWindow.eruda.destroy();
     return;
   }
-  if (erudaWindow.eruda) {
-    if (erudaWindow.eruda._isInit) {
-      erudaWindow.eruda.destroy();
-    } else {
-      console.error("Eruda is not initialized in the active iframe");
-    }
-  } else {
-    const erudaDocument = activeIframe.contentDocument;
-    if (!erudaDocument) {
-      console.error("No content document found for the active iframe");
-      return;
-    }
-    const script = erudaDocument.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/eruda";
-    script.onload = () => {
-      if (!erudaWindow.eruda) {
-        console.error("Failed to load Eruda in the active iframe");
-        return;
-      }
-      erudaWindow.eruda.init();
-      erudaWindow.eruda.show();
-    };
-    erudaDocument.head.appendChild(script);
-  }
+  const doc = activeIframe.contentDocument;
+  if (!doc) return;
+  const script = doc.createElement("script"); script.src = "https://cdn.jsdelivr.net/npm/eruda";
+  script.onload = () => erudaWindow.eruda?.init();
+  doc.head.appendChild(script);
 }
-// Fullscreen
+
 function FS() {
   const activeIframe = document.querySelector("#frame-container iframe.active");
-  if (activeIframe) {
-    if (activeIframe.contentDocument.fullscreenElement) {
-      activeIframe.contentDocument.exitFullscreen();
-    } else {
-      activeIframe.contentDocument.documentElement.requestFullscreen();
-    }
-  } else {
-    console.error("No active iframe found");
-  }
+  if (!activeIframe) return;
+  if (activeIframe.contentDocument.fullscreenElement) activeIframe.contentDocument.exitFullscreen();
+  else activeIframe.contentDocument.documentElement.requestFullscreen();
 }
+
 const fullscreenButton = document.getElementById("fullscreen-button");
 fullscreenButton.addEventListener("click", FS);
-// Home
-function Home() {
-  window.location.href = "./";
-}
+function Home() { window.location.href = "./"; }
 const homeButton = document.getElementById("home-page");
 homeButton.addEventListener("click", Home);
-// Back
-function goBack() {
-  const activeIframe = document.querySelector("#frame-container iframe.active");
-  if (activeIframe) {
-    activeIframe.contentWindow.history.back();
-    iframe.src = activeIframe.src;
-    Load();
-  } else {
-    console.error("No active iframe found");
-  }
-}
-// Forward
-function goForward() {
-  const activeIframe = document.querySelector("#frame-container iframe.active");
-  if (activeIframe) {
-    activeIframe.contentWindow.history.forward();
-    iframe.src = activeIframe.src;
-    Load();
-  } else {
-    console.error("No active iframe found");
-  }
-}
-// Remove Nav
+function goBack() { const iframe = document.querySelector("#frame-container iframe.active"); if (iframe) { iframe.contentWindow.history.back(); Load(); } }
+function goForward() { const iframe = document.querySelector("#frame-container iframe.active"); if (iframe) { iframe.contentWindow.history.forward(); Load(); } }
+
 document.addEventListener("DOMContentLoaded", () => {
   const tb = document.getElementById("tabs-button");
   const nb = document.getElementById("right-side-nav");
   tb.addEventListener("click", () => {
     const activeIframe = document.querySelector("#frame-container iframe.active");
+    if (!activeIframe) return;
     if (nb.style.display === "none") {
-      nb.style.display = "";
-      activeIframe.style.top = "10%";
-      activeIframe.style.height = "90%";
-      tb.querySelector("i").classList.remove("fa-magnifying-glass-plus");
-      tb.querySelector("i").classList.add("fa-magnifying-glass-minus");
+      nb.style.display = ""; activeIframe.style.top = "10%"; activeIframe.style.height = "90%";
+      tb.querySelector("i").classList.replace("fa-magnifying-glass-plus", "fa-magnifying-glass-minus");
     } else {
-      nb.style.display = "none";
-      activeIframe.style.top = "5%";
-      activeIframe.style.height = "95%";
-      tb.querySelector("i").classList.remove("fa-magnifying-glass-minus");
-      tb.querySelector("i").classList.add("fa-magnifying-glass-plus");
+      nb.style.display = "none"; activeIframe.style.top = "5%"; activeIframe.style.height = "95%";
+      tb.querySelector("i").classList.replace("fa-magnifying-glass-minus", "fa-magnifying-glass-plus");
     }
   });
 });
-if (navigator.userAgent.includes("Chrome")) {
-  window.addEventListener("resize", () => {
-    navigator.keyboard.lock(["Escape"]);
-  });
-}
+
 function Load() {
   const activeIframe = document.querySelector("#frame-container iframe.active");
-  if (activeIframe && activeIframe.contentWindow.document.readyState === "complete") {
+  if (!activeIframe || activeIframe.contentWindow.document.readyState !== "complete") return;
+  try {
     const website = activeIframe.contentWindow.document.location.href;
-    if (website.includes("/a/sj/")) {
-      if (window.__isSj?.decodeUrl) {
-        const decodedValue = window.__isSj.decodeUrl(website);
-        localStorage.setItem("decoded", decodedValue);
-        document.getElementById("input").value = decodedValue;
-      } else {
-        document.getElementById("input").value = website;
-      }
-    } else if (website.includes("/a/q/")) {
-      const websitePath = website.replace(window.location.origin, "").replace("/a/q/", "");
-      const decodedValue = decodeXor(websitePath);
-      localStorage.setItem("decoded", websitePath);
-      document.getElementById("input").value = decodedValue;
-    } else if (website.includes("/a/")) {
-      const websitePath = website.replace(window.location.origin, "").replace("/a/", "");
-      localStorage.setItem("decoded", websitePath);
-      const decodedValue = decodeXor(websitePath);
-      document.getElementById("input").value = decodedValue;
-    } else {
-      const websitePath = website.replace(window.location.origin, "");
-      document.getElementById("input").value = websitePath;
-      localStorage.setItem("decoded", websitePath);
-    }
-  }
+    const input = document.getElementById("input");
+    if (website.includes("/a/sj/") && window.__isSj?.decodeUrl) input.value = window.__isSj.decodeUrl(website);
+    else if (website.includes("/a/q/")) input.value = decodeXor(website.replace(window.location.origin, "").replace("/a/q/", ""));
+    else if (website.includes("/a/")) input.value = decodeXor(website.replace(window.location.origin, "").replace("/a/", ""));
+    else input.value = website.replace(window.location.origin, "");
+  } catch {}
 }
+
 function decodeXor(input) {
-  if (!input) {
-    return input;
-  }
+  if (!input) return input;
   const [str, ...search] = input.split("?");
-  return (
-    decodeURIComponent(str)
-      .split("")
-      .map((char, ind) => (ind % 2 ? String.fromCharCode(char.charCodeAt(Number.NaN) ^ 2) : char))
-      .join("") + (search.length ? `?${search.join("?")}` : "")
-  );
+  return decodeURIComponent(str).split("").map((char, ind) => ind % 2 ? String.fromCharCode(char.charCodeAt(Number.NaN) ^ 2) : char).join("") + (search.length ? `?${search.join("?")}` : "");
 }
