@@ -59,6 +59,12 @@ body {
    background-attachment: fixed;
 }
 
+@supports (-webkit-touch-callout: none) {
+   body {
+      background-attachment: scroll;
+   }
+}
+
 ::placeholder {
    color: var(--text-placeholder);
    opacity: 1;
