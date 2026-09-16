@@ -1,30 +1,27 @@
 // tabs.js
 
-// Use one dedicated UV worker for the /a/ proxy on every platform.
-// Keeping the worker script itself under /a/ guarantees that its scope is /a/.
-const PROXY_SW = "/a/sw.js?v=2026-09-16-3";
-
+// The tabs page is /d. A service worker scoped only to /a/ cannot intercept
+// the first /a/ navigation because the /d document is outside that scope.
+// Use the root worker so it controls the tabs page and can intercept /a/.
 window.__proxyReady = (async () => {
   if (!("serviceWorker" in navigator)) return false;
 
   try {
-    const registration = await navigator.serviceWorker.register(PROXY_SW, {
-      scope: "/a/",
+    const registration = await navigator.serviceWorker.register("/sw.js?v=2026-09-16-root-4", {
+      scope: "/",
       updateViaCache: "none",
     });
 
     await registration.update();
-
-    if (registration.waiting) {
-      registration.waiting.postMessage({ type: "SKIP_WAITING" });
-    }
-
     await navigator.serviceWorker.ready;
 
-    while (!registration.active) {
-      await new Promise(resolve => setTimeout(resolve, 50));
+    if (!navigator.serviceWorker.controller && !sessionStorage.getItem("root-sw-reloaded")) {
+      sessionStorage.setItem("root-sw-reloaded", "1");
+      location.reload();
+      return false;
     }
 
+    sessionStorage.removeItem("root-sw-reloaded");
     return true;
   } catch (error) {
     console.error("Proxy service worker setup failed:", error);
@@ -48,8 +45,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // UV is the stable proxy path. Do not switch to Scramjet here; its combined
-  // worker was allowing /a/ navigations to fall through to Express's 404.
   async function getPxyUrl(url) {
     return `/a/${__uv$config.encodeUrl(url)}`;
   }
