@@ -1,22 +1,17 @@
-importScripts("/assets/history/config.js?v=2026-09-16");
-importScripts("/assets/history/worker.js?v=2026-09-16");
-importScripts("/assets/mathematics/bundle.js?v=2026-09-16");
-importScripts("/assets/mathematics/config.js?v=2026-09-16");
-importScripts(__uv$config.sw || "/assets/mathematics/sw.js?v=2026-09-16");
-importScripts("/assets/languagearts/sj.all.js?v=2026-09-16");
+importScripts("/assets/history/config.js?v=2025-04-15");
+importScripts("/assets/history/worker.js?v=2025-04-15");
+importScripts("/assets/mathematics/bundle.js?v=2025-04-15");
+importScripts("/assets/mathematics/config.js?v=2025-04-15");
+importScripts(__uv$config.sw || "/assets/mathematics/sw.js?v=2025-04-15");
+importScripts("/assets/languagearts/sj.all.js?v=2025-04-15");
 const { ScramjetServiceWorker } = $scramjetLoadWorker();
 
 const uv = new UVServiceWorker();
 const dynamic = new Dynamic();
 const sj = new ScramjetServiceWorker();
 
-self.addEventListener("install", event => {
-  event.waitUntil(self.skipWaiting());
-});
-
-self.addEventListener("activate", event => {
-  event.waitUntil(self.clients.claim());
-});
+const userKey = new URL(location).searchParams.get("userkey");
+self.dynamic = dynamic;
 
 self.addEventListener("fetch", event => {
   event.respondWith(
