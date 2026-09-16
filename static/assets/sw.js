@@ -20,31 +20,42 @@ self.addEventListener("fetch", event => {
   if (!event.request.url.startsWith(`${location.origin}/a/`)) return;
 
   event.respondWith((async () => {
-    const response = await uv.fetch(event);
+    try {
+      const response = await uv.fetch(event);
 
-    // Safari can treat a proxied document as a download when the upstream
-    // response carries Content-Disposition: attachment or an octet-stream
-    // content type. A document request must stay a document inside the tab.
-    if (event.request.destination === "document") {
-      const headers = new Headers(response.headers);
-      const disposition = headers.get("content-disposition");
-      const type = headers.get("content-type") || "";
+      // Safari can treat a proxied document as a download when the upstream
+      // response carries Content-Disposition: attachment or an octet-stream
+      // content type. A document request must stay a document inside the tab.
+      if (event.request.destination === "document") {
+        const status = Number.isInteger(response.status) && response.status >= 200 && response.status <= 599
+          ? response.status
+          : 500;
+        const headers = new Headers(response.headers);
+        const disposition = headers.get("content-disposition");
+        const type = headers.get("content-type") || "";
 
-      if (disposition && /attachment/i.test(disposition)) {
-        headers.delete("content-disposition");
+        if (disposition && /attachment/i.test(disposition)) {
+          headers.delete("content-disposition");
+        }
+
+        if (/^application\/octet-stream\b/i.test(type)) {
+          headers.set("content-type", "text/html; charset=UTF-8");
+        }
+
+        return new Response(response.body, {
+          status,
+          statusText: response.statusText,
+          headers,
+        });
       }
 
-      if (/^application\/octet-stream\b/i.test(type)) {
-        headers.set("content-type", "text/html; charset=UTF-8");
-      }
-
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
+      return response;
+    } catch (error) {
+      console.error("Ultraviolet fetch failed:", error);
+      return new Response("Proxy error: " + String(error), {
+        status: 502,
+        headers: { "content-type": "text/plain; charset=UTF-8" },
       });
     }
-
-    return response;
   })());
 });
