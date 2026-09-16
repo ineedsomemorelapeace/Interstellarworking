@@ -1,19 +1,30 @@
 // index.js
-window.addEventListener("load", () => {
+window.addEventListener("load", async () => {
   const isIOSWebKit =
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
   const serviceWorker = isIOSWebKit
-    ? "/assets/sw.js?v=2026-09-15-ios"
-    : "/sw.js?v=2025-04-15";
+    ? "/assets/sw.js?v=2026-09-16"
+    : "/sw.js?v=2026-09-16";
 
-  navigator.serviceWorker.register(serviceWorker, {
-    scope: "/a/",
-    updateViaCache: "none",
-  }).catch(error => {
+  try {
+    // Clear an older proxy worker once so stale worker code cannot keep
+    // intercepting /a/ requests after an update.
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    for (const registration of registrations) {
+      if (registration.scope.endsWith("/a/")) {
+        await registration.unregister();
+      }
+    }
+
+    await navigator.serviceWorker.register(serviceWorker, {
+      scope: "/a/",
+      updateViaCache: "none",
+    });
+  } catch (error) {
     console.error("Service worker registration failed:", error);
-  });
+  }
 });
 
 let xl;
