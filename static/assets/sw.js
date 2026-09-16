@@ -6,7 +6,7 @@ importScripts("/assets/mathematics/config.js?v=9-30-2024");
 importScripts("/assets/mathematics/sw.js?v=9-30-2024");
 
 const uv = new UVServiceWorker();
-const userKey = new URL(location).searchParams.get("userkey");
+const userKey = new URL(location).searchParams.get("userkey") || crypto.randomUUID();
 
 self.addEventListener("install", event => {
   event.waitUntil(self.skipWaiting());
@@ -23,9 +23,6 @@ self.addEventListener("fetch", event => {
     try {
       const response = await uv.fetch(event);
 
-      // Safari can treat a proxied document as a download when the upstream
-      // response carries Content-Disposition: attachment or an octet-stream
-      // content type. A document request must stay a document inside the tab.
       if (event.request.destination === "document") {
         const status = Number.isInteger(response.status) && response.status >= 200 && response.status <= 599
           ? response.status
