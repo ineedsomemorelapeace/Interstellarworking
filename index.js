@@ -128,15 +128,15 @@ app.use("/bm", express.static(baremuxPath, transportStaticOptions));
 app.use("/ep", express.static(epoxyDistPath, transportStaticOptions));
 
 const routes = [
-  { path: "/b", file: "apps.html" },
-  { path: "/a", file: "games.html" },
-  { path: "/play.html", file: "games.html" },
-  { path: "/c", file: "settings.html" },
-  { path: "/d", file: "tabs.html" },
+  { path: ["/b", "/b/"], file: "apps.html" },
+  { path: ["/a", "/a/"], file: "games.html" },
+  { path: ["/play.html", "/play.html/"], file: "games.html" },
+  { path: ["/c", "/c/"], file: "settings.html" },
+  { path: ["/d", "/d/"], file: "tabs.html" },
   { path: "/", file: "index.html" },
 ];
 
-// biome-ignore lint: idk
+// Support both /d and /d/ (and the same for the other app routes).
 routes.forEach(route => {
   app.get(route.path, (_req, res) => {
     res.sendFile(path.join(__dirname, "static", route.file));
