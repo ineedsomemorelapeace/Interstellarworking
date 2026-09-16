@@ -6,6 +6,7 @@ importScripts("/assets/mathematics/config.js?v=9-30-2024");
 importScripts("/assets/mathematics/sw.js?v=9-30-2024");
 
 const uv = new UVServiceWorker();
+const userKey = new URL(location).searchParams.get("userkey");
 
 self.addEventListener("install", event => {
   event.waitUntil(self.skipWaiting());
