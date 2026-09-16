@@ -122,26 +122,24 @@ app.use("/assets/sw.js", (_req, res, next) => {
   next();
 });
 
-// Handle the app entry points explicitly so they are never mistaken for missing files.
-const routes = [
-  { paths: ["/b", "/b/"], file: "apps.html" },
-  { paths: ["/a", "/a/"], file: "games.html" },
-  { paths: ["/play.html", "/play.html/"], file: "games.html" },
-  { paths: ["/c", "/c/"], file: "settings.html" },
-  { paths: ["/d", "/d/"], file: "tabs.html" },
-  { paths: ["/", "/index.html"], file: "index.html" },
-];
-
-routes.forEach(route => {
-  app.get(route.paths, (_req, res) => {
-    res.sendFile(path.join(__dirname, "static", route.file));
-  });
-});
-
 app.use(express.static(path.join(__dirname, "static")));
 app.use("/ca", cors({ origin: true }));
 app.use("/bm", express.static(baremuxPath, transportStaticOptions));
 app.use("/ep", express.static(epoxyDistPath, transportStaticOptions));
+
+// Explicit route handlers instead of an array so Express cannot mis-handle
+// the /d and /d/ entry points on the Codespaces proxy.
+app.get("/b", (_req, res) => res.sendFile(path.join(__dirname, "static", "apps.html")));
+app.get("/b/", (_req, res) => res.sendFile(path.join(__dirname, "static", "apps.html")));
+app.get("/a", (_req, res) => res.sendFile(path.join(__dirname, "static", "games.html")));
+app.get("/a/", (_req, res) => res.sendFile(path.join(__dirname, "static", "games.html")));
+app.get("/play.html", (_req, res) => res.sendFile(path.join(__dirname, "static", "games.html")));
+app.get("/play.html/", (_req, res) => res.sendFile(path.join(__dirname, "static", "games.html")));
+app.get("/c", (_req, res) => res.sendFile(path.join(__dirname, "static", "settings.html")));
+app.get("/c/", (_req, res) => res.sendFile(path.join(__dirname, "static", "settings.html")));
+app.get("/d", (_req, res) => res.sendFile(path.join(__dirname, "static", "tabs.html")));
+app.get("/d/", (_req, res) => res.sendFile(path.join(__dirname, "static", "tabs.html")));
+app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "static", "index.html")));
 
 app.use((req, res, next) => {
   res.status(404).sendFile(path.join(__dirname, "static", "404.html"));
