@@ -122,26 +122,26 @@ app.use("/assets/sw.js", (_req, res, next) => {
   next();
 });
 
+// Handle the app entry points explicitly so they are never mistaken for missing files.
+const routes = [
+  { paths: ["/b", "/b/"], file: "apps.html" },
+  { paths: ["/a", "/a/"], file: "games.html" },
+  { paths: ["/play.html", "/play.html/"], file: "games.html" },
+  { paths: ["/c", "/c/"], file: "settings.html" },
+  { paths: ["/d", "/d/"], file: "tabs.html" },
+  { paths: ["/", "/index.html"], file: "index.html" },
+];
+
+routes.forEach(route => {
+  app.get(route.paths, (_req, res) => {
+    res.sendFile(path.join(__dirname, "static", route.file));
+  });
+});
+
 app.use(express.static(path.join(__dirname, "static")));
 app.use("/ca", cors({ origin: true }));
 app.use("/bm", express.static(baremuxPath, transportStaticOptions));
 app.use("/ep", express.static(epoxyDistPath, transportStaticOptions));
-
-const routes = [
-  { path: ["/b", "/b/"], file: "apps.html" },
-  { path: ["/a", "/a/"], file: "games.html" },
-  { path: ["/play.html", "/play.html/"], file: "games.html" },
-  { path: ["/c", "/c/"], file: "settings.html" },
-  { path: ["/d", "/d/"], file: "tabs.html" },
-  { path: "/", file: "index.html" },
-];
-
-// Support both /d and /d/ (and the same for the other app routes).
-routes.forEach(route => {
-  app.get(route.path, (_req, res) => {
-    res.sendFile(path.join(__dirname, "static", route.file));
-  });
-});
 
 app.use((req, res, next) => {
   res.status(404).sendFile(path.join(__dirname, "static", "404.html"));
