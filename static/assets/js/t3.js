@@ -1,34 +1,34 @@
 // tabs.js
 
-const isIOSWebKit =
-  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+// Use one dedicated UV worker for the /a/ proxy on every platform.
+// Keeping the worker script itself under /a/ guarantees that its scope is /a/.
+const PROXY_SW = "/a/sw.js?v=2026-09-16-3";
 
-// Do not create the first proxy iframe until its service worker is active.
 window.__proxyReady = (async () => {
-  if (!("serviceWorker" in navigator)) return;
+  if (!("serviceWorker" in navigator)) return false;
 
   try {
-    const serviceWorker = isIOSWebKit
-      ? "/a/sw.js?v=2026-09-16-ios-2"
-      : "/sw.js?v=2026-09-16-2";
-
-    const registration = await navigator.serviceWorker.register(serviceWorker, {
+    const registration = await navigator.serviceWorker.register(PROXY_SW, {
       scope: "/a/",
       updateViaCache: "none",
     });
 
     await registration.update();
+
+    if (registration.waiting) {
+      registration.waiting.postMessage({ type: "SKIP_WAITING" });
+    }
+
     await navigator.serviceWorker.ready;
 
-    // Safari can report ready before the new worker controls this document.
-    // A newly-created /a/ iframe will still be controlled once the worker is
-    // active, so wait for an active worker before creating it.
     while (!registration.active) {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
+
+    return true;
   } catch (error) {
-    console.error("Service worker setup failed:", error);
+    console.error("Proxy service worker setup failed:", error);
+    return false;
   }
 })();
 
@@ -48,22 +48,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  function useScramjetPxy() {
-    return localStorage.getItem("pchoice") === "sj";
-  }
-
+  // UV is the stable proxy path. Do not switch to Scramjet here; its combined
+  // worker was allowing /a/ navigations to fall through to Express's 404.
   async function getPxyUrl(url) {
-    if (useScramjetPxy()) {
-      if (window.__isSjReady) await window.__isSjReady;
-      if (window.__isSj?.encodeUrl) return window.__isSj.encodeUrl(url);
-    }
     return `/a/${__uv$config.encodeUrl(url)}`;
   }
 
   function getPxyUrlSync(url) {
-    if (useScramjetPxy() && window.__isSj?.encodeUrl) {
-      return window.__isSj.encodeUrl(url);
-    }
     return `/a/${__uv$config.encodeUrl(url)}`;
   }
 
