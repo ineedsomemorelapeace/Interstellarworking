@@ -1,13 +1,43 @@
 // tabs.js
 
-// The tabs page is /d. A service worker scoped only to /a/ cannot intercept
-// the first /a/ navigation because the /d document is outside that scope.
-// Use the root worker so it controls the tabs page and can intercept /a/.
+// Keep only one proxy service worker. Older builds registered workers under
+// /a/; those are more specific than the root worker and therefore win for
+// /a/... requests. Remove them before installing the root-scoped worker.
+const PROXY_SW = "/sw.js?v=2026-09-16-root-5";
+
 window.__proxyReady = (async () => {
   if (!("serviceWorker" in navigator)) return false;
 
   try {
-    const registration = await navigator.serviceWorker.register("/sw.js?v=2026-09-16-root-4", {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    let removedSpecificWorker = false;
+
+    for (const registration of registrations) {
+      const scopePath = new URL(registration.scope).pathname;
+      const scriptUrls = [
+        registration.active?.scriptURL,
+        registration.waiting?.scriptURL,
+        registration.installing?.scriptURL,
+      ].filter(Boolean);
+
+      const hasOldProxyWorker =
+        scopePath === "/a/" &&
+        scriptUrls.some(url => {
+          try {
+            const path = new URL(url).pathname;
+            return path === "/assets/sw.js" || path === "/a/sw.js";
+          } catch {
+            return false;
+          }
+        });
+
+      if (hasOldProxyWorker) {
+        await registration.unregister();
+        removedSpecificWorker = true;
+      }
+    }
+
+    const registration = await navigator.serviceWorker.register(PROXY_SW, {
       scope: "/",
       updateViaCache: "none",
     });
@@ -15,14 +45,22 @@ window.__proxyReady = (async () => {
     await registration.update();
     await navigator.serviceWorker.ready;
 
+    // A newly installed root worker cannot control the current /d document
+    // until the next navigation. Reload once so /a/... is actually intercepted.
     if (!navigator.serviceWorker.controller && !sessionStorage.getItem("root-sw-reloaded")) {
       sessionStorage.setItem("root-sw-reloaded", "1");
       location.reload();
       return false;
     }
 
+    if (removedSpecificWorker && !sessionStorage.getItem("old-proxy-cleaned")) {
+      sessionStorage.setItem("old-proxy-cleaned", "1");
+      location.reload();
+      return false;
+    }
+
     sessionStorage.removeItem("root-sw-reloaded");
-    return true;
+    return Boolean(navigator.serviceWorker.controller);
   } catch (error) {
     console.error("Proxy service worker setup failed:", error);
     return false;
@@ -30,7 +68,8 @@ window.__proxyReady = (async () => {
 })();
 
 document.addEventListener("DOMContentLoaded", async () => {
-  await window.__proxyReady;
+  const proxyReady = await window.__proxyReady;
+  if (!proxyReady) return;
 
   const form = document.getElementById("fv");
   const input = document.getElementById("input");
