@@ -5,45 +5,13 @@ const isIOSWebKit =
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
 // Do not create the first proxy iframe until its service worker is active.
-// Otherwise Safari can request /a/... before the worker controls the iframe,
-// causing Express to return the normal 404 page.
 window.__proxyReady = (async () => {
   if (!("serviceWorker" in navigator)) return;
 
   try {
-    if (isIOSWebKit) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      const wantedPath = "/assets/sw.js";
-
-      for (const registration of registrations) {
-        const script =
-          registration.active?.scriptURL ||
-          registration.waiting?.scriptURL ||
-          registration.installing?.scriptURL ||
-          "";
-        let scriptPath = "";
-        try {
-          scriptPath = new URL(script).pathname;
-        } catch {}
-
-        if (
-          registration.scope.endsWith("/a/") &&
-          scriptPath &&
-          scriptPath !== wantedPath
-        ) {
-          await registration.unregister();
-        }
-      }
-
-      if (window.caches) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(key => caches.delete(key)));
-      }
-    }
-
     const serviceWorker = isIOSWebKit
-      ? "/assets/sw.js?v=2026-09-16-ios-1"
-      : "/sw.js?v=2026-09-16-1";
+      ? "/a/sw.js?v=2026-09-16-ios-2"
+      : "/sw.js?v=2026-09-16-2";
 
     const registration = await navigator.serviceWorker.register(serviceWorker, {
       scope: "/a/",
@@ -52,15 +20,17 @@ window.__proxyReady = (async () => {
 
     await registration.update();
     await navigator.serviceWorker.ready;
+
+    // Safari can report ready before the new worker controls this document.
+    // A newly-created /a/ iframe will still be controlled once the worker is
+    // active, so wait for an active worker before creating it.
+    while (!registration.active) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
   } catch (error) {
     console.error("Service worker setup failed:", error);
   }
 })();
-
-window.addEventListener("load", () => {
-  // Registration is started above as early as possible. The tab creation
-  // below waits on window.__proxyReady so /a/... cannot race the worker.
-});
 
 document.addEventListener("DOMContentLoaded", async () => {
   await window.__proxyReady;
@@ -152,9 +122,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     newTab.append(tabTitle, closeButton);
     tabList.appendChild(newTab);
     tabList.querySelectorAll("li").forEach(tab => tab.classList.remove("active"));
-    iframeContainer
-      .querySelectorAll("iframe")
-      .forEach(iframe => iframe.classList.remove("active"));
+    iframeContainer.querySelectorAll("iframe").forEach(iframe => iframe.classList.remove("active"));
 
     newTab.classList.add("active");
     newIframe.dataset.tabId = tabCounter;
@@ -214,18 +182,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   function switchTab(event) {
     const id = event.target.closest("li").dataset.tabId;
     tabList.querySelectorAll("li").forEach(tab => tab.classList.remove("active"));
-    iframeContainer
-      .querySelectorAll("iframe")
-      .forEach(iframe => iframe.classList.remove("active"));
+    iframeContainer.querySelectorAll("iframe").forEach(iframe => iframe.classList.remove("active"));
     tabList.querySelector(`[data-tab-id='${id}']`)?.classList.add("active");
     iframeContainer.querySelector(`[data-tab-id='${id}']`)?.classList.add("active");
     Load();
   }
 
   let dragTab = null;
-  tabList.addEventListener("dragstart", event => {
-    dragTab = event.target;
-  });
+  tabList.addEventListener("dragstart", event => { dragTab = event.target; });
   tabList.addEventListener("dragover", event => {
     event.preventDefault();
     const target = event.target;
@@ -235,19 +199,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       tabList.insertBefore(dragTab, ti < di ? target : target.nextSibling);
     }
   });
-  tabList.addEventListener("dragend", () => {
-    dragTab = null;
-  });
+  tabList.addEventListener("dragend", () => { dragTab = null; });
 
   createNewTab();
 });
 
 function reload() {
   const iframe = document.querySelector("#frame-container iframe.active");
-  if (iframe) {
-    iframe.src = iframe.src;
-    Load();
-  }
+  if (iframe) { iframe.src = iframe.src; Load(); }
 }
 
 function popout() {
@@ -256,26 +215,14 @@ function popout() {
   const newWindow = window.open("about:blank", "_blank");
   if (!newWindow) return;
   const name = localStorage.getItem("name") || "My Drive - Google Drive";
-  const icon =
-    localStorage.getItem("icon") ||
-    "https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png";
+  const icon = localStorage.getItem("icon") || "https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png";
   newWindow.document.title = name;
   const link = newWindow.document.createElement("link");
   link.rel = "icon";
   link.href = encodeURI(icon);
   newWindow.document.head.appendChild(link);
   const iframe = newWindow.document.createElement("iframe");
-  Object.assign(iframe.style, {
-    position: "fixed",
-    top: "0",
-    bottom: "0",
-    left: "0",
-    right: "0",
-    border: "none",
-    outline: "none",
-    width: "100%",
-    height: "100%",
-  });
+  Object.assign(iframe.style, { position:"fixed", top:"0", bottom:"0", left:"0", right:"0", border:"none", outline:"none", width:"100%", height:"100%" });
   iframe.src = activeIframe.src;
   newWindow.document.body.appendChild(iframe);
 }
@@ -284,10 +231,7 @@ function eToggle() {
   const iframe = document.querySelector("#frame-container iframe.active");
   if (!iframe?.contentWindow) return;
   const win = iframe.contentWindow;
-  if (win.eruda) {
-    if (win.eruda._isInit) win.eruda.destroy();
-    return;
-  }
+  if (win.eruda) { if (win.eruda._isInit) win.eruda.destroy(); return; }
   const doc = iframe.contentDocument;
   if (!doc) return;
   const script = doc.createElement("script");
@@ -303,25 +247,9 @@ function FS() {
   else iframe.contentDocument.documentElement.requestFullscreen();
 }
 
-function Home() {
-  window.location.href = "./";
-}
-
-function goBack() {
-  const iframe = document.querySelector("#frame-container iframe.active");
-  if (iframe) {
-    iframe.contentWindow.history.back();
-    Load();
-  }
-}
-
-function goForward() {
-  const iframe = document.querySelector("#frame-container iframe.active");
-  if (iframe) {
-    iframe.contentWindow.history.forward();
-    Load();
-  }
-}
+function Home() { window.location.href = "./"; }
+function goBack() { const iframe = document.querySelector("#frame-container iframe.active"); if (iframe) { iframe.contentWindow.history.back(); Load(); } }
+function goForward() { const iframe = document.querySelector("#frame-container iframe.active"); if (iframe) { iframe.contentWindow.history.forward(); Load(); } }
 
 document.addEventListener("DOMContentLoaded", () => {
   const tb = document.getElementById("tabs-button");
@@ -330,21 +258,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const iframe = document.querySelector("#frame-container iframe.active");
     if (!iframe) return;
     if (nb.style.display === "none") {
-      nb.style.display = "";
-      iframe.style.top = "10%";
-      iframe.style.height = "90%";
-      tb.querySelector("i").classList.replace(
-        "fa-magnifying-glass-plus",
-        "fa-magnifying-glass-minus",
-      );
+      nb.style.display = ""; iframe.style.top = "10%"; iframe.style.height = "90%";
+      tb.querySelector("i").classList.replace("fa-magnifying-glass-plus", "fa-magnifying-glass-minus");
     } else {
-      nb.style.display = "none";
-      iframe.style.top = "5%";
-      iframe.style.height = "95%";
-      tb.querySelector("i").classList.replace(
-        "fa-magnifying-glass-minus",
-        "fa-magnifying-glass-plus",
-      );
+      nb.style.display = "none"; iframe.style.top = "5%"; iframe.style.height = "95%";
+      tb.querySelector("i").classList.replace("fa-magnifying-glass-minus", "fa-magnifying-glass-plus");
     }
   });
 });
@@ -355,31 +273,15 @@ function Load() {
   try {
     const website = iframe.contentWindow.document.location.href;
     const input = document.getElementById("input");
-    if (website.includes("/a/sj/") && window.__isSj?.decodeUrl) {
-      input.value = window.__isSj.decodeUrl(website);
-    } else if (website.includes("/a/q/")) {
-      input.value = decodeXor(
-        website.replace(window.location.origin, "").replace("/a/q/", ""),
-      );
-    } else if (website.includes("/a/")) {
-      input.value = decodeXor(
-        website.replace(window.location.origin, "").replace("/a/", ""),
-      );
-    } else {
-      input.value = website.replace(window.location.origin, "");
-    }
+    if (website.includes("/a/sj/") && window.__isSj?.decodeUrl) input.value = window.__isSj.decodeUrl(website);
+    else if (website.includes("/a/q/")) input.value = decodeXor(website.replace(window.location.origin, "").replace("/a/q/", ""));
+    else if (website.includes("/a/")) input.value = decodeXor(website.replace(window.location.origin, "").replace("/a/", ""));
+    else input.value = website.replace(window.location.origin, "");
   } catch {}
 }
 
 function decodeXor(input) {
   if (!input) return input;
   const [str, ...search] = input.split("?");
-  return (
-    decodeURIComponent(str)
-      .split("")
-      .map((char, ind) =>
-        ind % 2 ? String.fromCharCode(char.charCodeAt(Number.NaN) ^ 2) : char,
-      )
-      .join("") + (search.length ? `?${search.join("?")}` : "")
-  );
+  return decodeURIComponent(str).split("").map((char, ind) => ind % 2 ? String.fromCharCode(char.charCodeAt(Number.NaN) ^ 2) : char).join("") + (search.length ? `?${search.join("?")}` : "");
 }
