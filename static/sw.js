@@ -1,36 +1,58 @@
-importScripts("/assets/history/config.js?v=2025-04-15");
-importScripts("/assets/history/worker.js?v=2025-04-15");
+// Root-scoped Ultraviolet service worker.
+// The /d tabs page must be controlled by this worker so requests it makes
+// to /a/ can be intercepted before they reach Express's 404 handler.
+
 importScripts("/assets/mathematics/bundle.js?v=2025-04-15");
 importScripts("/assets/mathematics/config.js?v=2025-04-15");
-importScripts(__uv$config.sw || "/assets/mathematics/sw.js?v=2025-04-15");
-importScripts("/assets/languagearts/sj.all.js?v=2025-04-15");
-const { ScramjetServiceWorker } = $scramjetLoadWorker();
+importScripts("/assets/mathematics/sw.js?v=2025-04-15");
 
 const uv = new UVServiceWorker();
-const dynamic = new Dynamic();
-const sj = new ScramjetServiceWorker();
+const userKey = new URL(location).searchParams.get("userkey") || crypto.randomUUID();
 
-const userKey = new URL(location).searchParams.get("userkey");
-self.dynamic = dynamic;
+self.addEventListener("install", event => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", event => {
+  event.waitUntil(self.clients.claim());
+});
 
 self.addEventListener("fetch", event => {
-  event.respondWith(
-    (async () => {
-      await sj.loadConfig();
+  if (!event.request.url.startsWith(`${location.origin}/a/`)) return;
 
-      if (await sj.route(event)) {
-        return await sj.fetch(event);
+  event.respondWith((async () => {
+    try {
+      const response = await uv.fetch(event);
+
+      if (event.request.destination === "document") {
+        const status = Number.isInteger(response.status) && response.status >= 200 && response.status <= 599
+          ? response.status
+          : 500;
+        const headers = new Headers(response.headers);
+        const disposition = headers.get("content-disposition");
+        const type = headers.get("content-type") || "";
+
+        if (disposition && /attachment/i.test(disposition)) {
+          headers.delete("content-disposition");
+        }
+        if (/^application\/octet-stream\b/i.test(type)) {
+          headers.set("content-type", "text/html; charset=UTF-8");
+        }
+
+        return new Response(response.body, {
+          status,
+          statusText: response.statusText,
+          headers,
+        });
       }
 
-      if (await dynamic.route(event)) {
-        return await dynamic.fetch(event);
-      }
-
-      if (event.request.url.startsWith(`${location.origin}/a/`)) {
-        return await uv.fetch(event);
-      }
-
-      return await fetch(event.request);
-    })(),
-  );
+      return response;
+    } catch (error) {
+      console.error("Ultraviolet fetch failed:", error);
+      return new Response("Proxy error: " + String(error), {
+        status: 502,
+        headers: { "content-type": "text/plain; charset=UTF-8" },
+      });
+    }
+  })());
 });
