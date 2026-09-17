@@ -1,40 +1,24 @@
 // tabs.js
 
-// Keep only one proxy service worker. Older builds registered workers under
-// /a/; those are more specific than the root worker and therefore win for
-// /a/... requests. Remove them before installing the root-scoped worker.
-const PROXY_SW = "/sw.js?v=2026-09-16-root-5";
+// Keep only the root proxy service worker. Any older /a/ scoped registration
+// is more specific and will win for /a/... requests, so remove it first.
+const PROXY_SW = "/sw.js?v=2026-09-16-root-6";
 
 window.__proxyReady = (async () => {
   if (!("serviceWorker" in navigator)) return false;
 
   try {
-    const registrations = await navigator.serviceWorker.getRegistrations();
     let removedSpecificWorker = false;
+    const registrations = await navigator.serviceWorker.getRegistrations();
 
     for (const registration of registrations) {
       const scopePath = new URL(registration.scope).pathname;
-      const scriptUrls = [
-        registration.active?.scriptURL,
-        registration.waiting?.scriptURL,
-        registration.installing?.scriptURL,
-      ].filter(Boolean);
+      if (scopePath !== "/a/") continue;
 
-      const hasOldProxyWorker =
-        scopePath === "/a/" &&
-        scriptUrls.some(url => {
-          try {
-            const path = new URL(url).pathname;
-            return path === "/assets/sw.js" || path === "/a/sw.js";
-          } catch {
-            return false;
-          }
-        });
-
-      if (hasOldProxyWorker) {
-        await registration.unregister();
-        removedSpecificWorker = true;
-      }
+      // This project no longer uses an /a/-scoped worker. Remove any old one,
+      // regardless of which script URL created it.
+      await registration.unregister();
+      removedSpecificWorker = true;
     }
 
     const registration = await navigator.serviceWorker.register(PROXY_SW, {
@@ -45,8 +29,7 @@ window.__proxyReady = (async () => {
     await registration.update();
     await navigator.serviceWorker.ready;
 
-    // A newly installed root worker cannot control the current /d document
-    // until the next navigation. Reload once so /a/... is actually intercepted.
+    // The root worker cannot control this already-open /d page until reload.
     if (!navigator.serviceWorker.controller && !sessionStorage.getItem("root-sw-reloaded")) {
       sessionStorage.setItem("root-sw-reloaded", "1");
       location.reload();
