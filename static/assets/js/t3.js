@@ -11,8 +11,8 @@ window.__proxyReady = (async () => {
       (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
     const workerPath = isIOSWebKit
-      ? "/assets/sw.js?v=2026-09-16-ios-5"
-      : "/sw.js?v=2026-09-16-uv-5";
+      ? "/assets/sw.js?v=2026-09-16-ios-6"
+      : "/sw.js?v=2026-09-16-uv-6";
     const workerPathname = isIOSWebKit ? "/assets/sw.js" : "/sw.js";
 
     const registrations = await navigator.serviceWorker.getRegistrations();
@@ -32,8 +32,6 @@ window.__proxyReady = (async () => {
         }
       });
 
-      // Remove the temporary root worker and every stale /a/ worker. Keep
-      // only the worker that is correct for this browser and scope.
       const isRootProxy = scopePath === "/" && scriptPaths.includes("/sw.js");
       const isAProxy = scopePath === "/a/" && scriptPaths.some(path =>
         path === "/sw.js" || path === "/assets/sw.js" || path === "/a/sw.js"
@@ -51,7 +49,27 @@ window.__proxyReady = (async () => {
     });
 
     await registration.update();
-    await navigator.serviceWorker.ready;
+
+    if (!registration.active) {
+      await new Promise((resolve, reject) => {
+        const worker = registration.installing || registration.waiting;
+        if (!worker) {
+          resolve();
+          return;
+        }
+        const onStateChange = () => {
+          if (worker.state === "activated") {
+            worker.removeEventListener("statechange", onStateChange);
+            resolve();
+          } else if (worker.state === "redundant") {
+            worker.removeEventListener("statechange", onStateChange);
+            reject(new Error("Proxy service worker became redundant"));
+          }
+        };
+        worker.addEventListener("statechange", onStateChange);
+      });
+    }
+
     return Boolean(registration.active);
   } catch (error) {
     console.error("Proxy service worker setup failed:", error);
