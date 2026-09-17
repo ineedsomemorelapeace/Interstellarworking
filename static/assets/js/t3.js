@@ -1,8 +1,7 @@
 // tabs.js
 
-// One root-scoped worker owns all /a/ proxy requests. The tabs page is /d/,
-// so a narrower /a/ worker can race with the iframe navigation.
-const PROXY_SW = "/sw.js?v=2026-09-17-root-2";
+// One root-scoped worker owns all /a/ proxy requests.
+const PROXY_SW = "/sw.js?v=2026-09-17-root-3";
 
 window.__proxyReady = (async () => {
   if (!("serviceWorker" in navigator)) return false;
@@ -10,8 +9,7 @@ window.__proxyReady = (async () => {
   try {
     const registrations = await navigator.serviceWorker.getRegistrations();
 
-    // Remove only the obsolete narrower proxy. Never unregister the root
-    // registration here; register() below updates it in place.
+    // Remove only the obsolete narrower proxy. Never remove the root worker.
     for (const registration of registrations) {
       if (new URL(registration.scope).pathname === "/a/") {
         await registration.unregister();
@@ -25,29 +23,51 @@ window.__proxyReady = (async () => {
 
     await registration.update();
 
-    if (!registration.active) {
-      await new Promise((resolve, reject) => {
-        const worker = registration.installing || registration.waiting;
-        if (!worker) {
-          reject(new Error("Proxy service worker did not start"));
-          return;
-        }
+    // A new worker can be installed while the old worker is still active.
+    // Do not create the proxy iframe until the newly requested worker is active.
+    const targetScript = new URL(PROXY_SW, location.href).href;
+    const isTargetActive = () =>
+      registration.active && registration.active.scriptURL === targetScript;
 
-        const onStateChange = () => {
-          if (worker.state === "activated") {
-            worker.removeEventListener("statechange", onStateChange);
+    if (!isTargetActive()) {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error("Proxy service worker activation timed out"));
+        }, 10000);
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          registration.removeEventListener("updatefound", onUpdateFound);
+          navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+          registration.installing?.removeEventListener("statechange", onStateChange);
+          registration.waiting?.removeEventListener("statechange", onStateChange);
+        };
+
+        const finish = () => {
+          if (isTargetActive()) {
+            cleanup();
             resolve();
-          } else if (worker.state === "redundant") {
-            worker.removeEventListener("statechange", onStateChange);
-            reject(new Error("Proxy service worker became redundant"));
           }
         };
 
-        worker.addEventListener("statechange", onStateChange);
+        const onStateChange = () => finish();
+        const onUpdateFound = () => {
+          registration.installing?.addEventListener("statechange", onStateChange);
+        };
+        const onControllerChange = () => finish();
+
+        registration.addEventListener("updatefound", onUpdateFound);
+        registration.installing?.addEventListener("statechange", onStateChange);
+        registration.waiting?.addEventListener("statechange", onStateChange);
+        navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+        finish();
       });
     }
 
-    return Boolean(registration.active);
+    // Make sure a newly-created iframe is under the active root registration.
+    if (!isTargetActive()) throw new Error("Proxy service worker is not active");
+    return true;
   } catch (error) {
     console.error("Proxy service worker setup failed:", error);
     return false;
