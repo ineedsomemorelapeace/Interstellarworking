@@ -1,49 +1,58 @@
 // tabs.js
 
-// Keep only the root proxy service worker. Any older /a/ scoped registration
-// is more specific and will win for /a/... requests, so remove it first.
-const PROXY_SW = "/sw.js?v=2026-09-16-root-6";
-
+// The proxy worker must own the /a/ scope itself. A root-scoped worker is
+// unnecessary here and can race with the iframe's first navigation.
 window.__proxyReady = (async () => {
   if (!("serviceWorker" in navigator)) return false;
 
   try {
-    let removedSpecificWorker = false;
-    const registrations = await navigator.serviceWorker.getRegistrations();
+    const isIOSWebKit =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+    const workerPath = isIOSWebKit
+      ? "/assets/sw.js?v=2026-09-16-ios-5"
+      : "/sw.js?v=2026-09-16-uv-5";
+    const workerPathname = isIOSWebKit ? "/assets/sw.js" : "/sw.js";
+
+    const registrations = await navigator.serviceWorker.getRegistrations();
     for (const registration of registrations) {
       const scopePath = new URL(registration.scope).pathname;
-      if (scopePath !== "/a/") continue;
+      const scriptUrls = [
+        registration.active?.scriptURL,
+        registration.waiting?.scriptURL,
+        registration.installing?.scriptURL,
+      ].filter(Boolean);
 
-      // This project no longer uses an /a/-scoped worker. Remove any old one,
-      // regardless of which script URL created it.
-      await registration.unregister();
-      removedSpecificWorker = true;
+      const scriptPaths = scriptUrls.map(url => {
+        try {
+          return new URL(url).pathname;
+        } catch {
+          return "";
+        }
+      });
+
+      // Remove the temporary root worker and every stale /a/ worker. Keep
+      // only the worker that is correct for this browser and scope.
+      const isRootProxy = scopePath === "/" && scriptPaths.includes("/sw.js");
+      const isAProxy = scopePath === "/a/" && scriptPaths.some(path =>
+        path === "/sw.js" || path === "/assets/sw.js" || path === "/a/sw.js"
+      );
+      const keep = isAProxy && scriptPaths.includes(workerPathname);
+
+      if ((isRootProxy || isAProxy) && !keep) {
+        await registration.unregister();
+      }
     }
 
-    const registration = await navigator.serviceWorker.register(PROXY_SW, {
-      scope: "/",
+    const registration = await navigator.serviceWorker.register(workerPath, {
+      scope: "/a/",
       updateViaCache: "none",
     });
 
     await registration.update();
     await navigator.serviceWorker.ready;
-
-    // The root worker cannot control this already-open /d page until reload.
-    if (!navigator.serviceWorker.controller && !sessionStorage.getItem("root-sw-reloaded")) {
-      sessionStorage.setItem("root-sw-reloaded", "1");
-      location.reload();
-      return false;
-    }
-
-    if (removedSpecificWorker && !sessionStorage.getItem("old-proxy-cleaned")) {
-      sessionStorage.setItem("old-proxy-cleaned", "1");
-      location.reload();
-      return false;
-    }
-
-    sessionStorage.removeItem("root-sw-reloaded");
-    return Boolean(navigator.serviceWorker.controller);
+    return Boolean(registration.active);
   } catch (error) {
     console.error("Proxy service worker setup failed:", error);
     return false;
