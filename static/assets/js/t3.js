@@ -1,24 +1,21 @@
 // tabs.js
 
-// Use one root-scoped proxy worker. The tabs page itself is /d/, so the
-// worker must control this page before its iframe navigates to /a/.
-const PROXY_SW = "/sw.js?v=2026-09-17-root-1";
+// One root-scoped worker owns all /a/ proxy requests. The tabs page is /d/,
+// so a narrower /a/ worker can race with the iframe navigation.
+const PROXY_SW = "/sw.js?v=2026-09-17-root-2";
 
 window.__proxyReady = (async () => {
   if (!("serviceWorker" in navigator)) return false;
 
   try {
-    let removedSpecificWorker = false;
     const registrations = await navigator.serviceWorker.getRegistrations();
 
+    // Remove only the obsolete narrower proxy. Never unregister the root
+    // registration here; register() below updates it in place.
     for (const registration of registrations) {
-      const scopePath = new URL(registration.scope).pathname;
-      if (scopePath !== "/a/") continue;
-
-      // /a/ is no longer used as a worker scope. A more-specific stale worker
-      // would otherwise win over the root worker and send /a/... to Express.
-      await registration.unregister();
-      removedSpecificWorker = true;
+      if (new URL(registration.scope).pathname === "/a/") {
+        await registration.unregister();
+      }
     }
 
     const registration = await navigator.serviceWorker.register(PROXY_SW, {
@@ -27,26 +24,30 @@ window.__proxyReady = (async () => {
     });
 
     await registration.update();
-    await navigator.serviceWorker.ready;
 
-    // A newly installed worker cannot reliably control an already-open page
-    // until the page navigates again. Reload once so the iframe's /a/ request
-    // is guaranteed to pass through the proxy worker instead of Express.
-    if (!navigator.serviceWorker.controller && !sessionStorage.getItem("root-sw-reloaded")) {
-      sessionStorage.setItem("root-sw-reloaded", "1");
-      location.reload();
-      return false;
+    if (!registration.active) {
+      await new Promise((resolve, reject) => {
+        const worker = registration.installing || registration.waiting;
+        if (!worker) {
+          reject(new Error("Proxy service worker did not start"));
+          return;
+        }
+
+        const onStateChange = () => {
+          if (worker.state === "activated") {
+            worker.removeEventListener("statechange", onStateChange);
+            resolve();
+          } else if (worker.state === "redundant") {
+            worker.removeEventListener("statechange", onStateChange);
+            reject(new Error("Proxy service worker became redundant"));
+          }
+        };
+
+        worker.addEventListener("statechange", onStateChange);
+      });
     }
 
-    if (removedSpecificWorker && !sessionStorage.getItem("old-proxy-cleaned")) {
-      sessionStorage.setItem("old-proxy-cleaned", "1");
-      location.reload();
-      return false;
-    }
-
-    sessionStorage.removeItem("root-sw-reloaded");
-    sessionStorage.removeItem("old-proxy-cleaned");
-    return Boolean(registration.active && navigator.serviceWorker.controller);
+    return Boolean(registration.active);
   } catch (error) {
     console.error("Proxy service worker setup failed:", error);
     return false;
